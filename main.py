@@ -105,21 +105,20 @@ def get_latest_tweet(username: str, retry_count: int = 0) -> Optional[Dict[str, 
         logging.info(f"Twitter API Response Status Code: {resp.status_code}")
         
         # Check for rate limiting
-        # Check for rate limiting
         if resp.status_code == 429:
             reset_time = resp.headers.get("x-rate-limit-reset")
             if reset_time:
                 wait_time = int(reset_time) - int(time.time()) + 5  # Add 5 seconds buffer
                 if wait_time > 0:
-                    if wait_time > 300:  # If wait time is more than 5 minutes
-                        logging.warning(f"Rate limit too long ({wait_time} seconds), skipping retry")
-                        return None
                     logging.warning(f"Rate limit reached. Waiting {wait_time} seconds before retry...")
                     time.sleep(wait_time)  # Wait the full reset time
                     return get_latest_tweet(username, retry_count + 1)
 
-            logging.warning("Rate limit reached for Twitter API. No reset time available.")
-            return None
+            # If no reset time available, use exponential backoff
+            backoff_time = min(300 * (2 ** retry_count), 900)  # Max 15 minutes
+            logging.warning(f"Rate limit reached. Using exponential backoff: {backoff_time} seconds")
+            time.sleep(backoff_time)
+            return get_latest_tweet(username, retry_count + 1)
             
         resp.raise_for_status()
         
@@ -178,8 +177,8 @@ def main():
         start_time = datetime.now()
         logging.info(f"Bot started at {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
-        # Add a small delay at start to avoid immediate rate limits
-        time.sleep(2)
+        # Add a delay at start to avoid immediate rate limits
+        time.sleep(5)
         
         # Validate environment variables
         required_vars = ['TWITTER_BEARER_TOKEN', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']
