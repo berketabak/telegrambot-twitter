@@ -14,6 +14,21 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+def mask_username(username: str, index: Optional[int] = None) -> str:
+    """
+    Masks a username for logging purposes.
+    
+    Args:
+        username (str): The username to mask
+        index (Optional[int]): The index of the username in the list
+        
+    Returns:
+        str: The masked username identifier
+    """
+    if index is not None:
+        return f"SECRET_USER_{index + 1}"
+    return "SECRET_USER"
+
 # Load environment variables
 if not load_dotenv():
     logging.error("No .env file found!")
@@ -50,7 +65,7 @@ def get_latest_tweet(username: str, retry_count: int = 0) -> Optional[Dict[str, 
     # Remove @ symbol if present in username
     username = username.lstrip('@')
     if retry_count >= 3:  # Maximum retry attempts
-        logging.error(f"Maximum retry attempts reached for @{username}")
+        logging.error(f"Maximum retry attempts reached for {mask_username(username)}")
         return None
         
     token = os.environ.get('TWITTER_BEARER_TOKEN')
@@ -69,18 +84,21 @@ def get_latest_tweet(username: str, retry_count: int = 0) -> Optional[Dict[str, 
     
     try:
         # First get the user ID
-        logging.info(f"Getting user ID for @{username}")
+        logging.info(f"Getting user ID for {mask_username(username)}")
         user_resp = requests.get(url, headers=headers, timeout=10)
         
         if user_resp.status_code == 400:
-            logging.error(f"Invalid username @{username}")
+            logging.error(f"Invalid username {mask_username(username)}")
             return None
             
-        # Log full response for debugging
-        logging.info(f"User lookup response for @{username}: {json.dumps(user_resp.json(), indent=2)}")
+        # Log full response for debugging with masked username
+        response_data = user_resp.json()
+        if 'data' in response_data and 'username' in response_data['data']:
+            response_data['data']['username'] = mask_username(response_data['data']['username'])
+        logging.info(f"User lookup response: {json.dumps(response_data, indent=2)}")
         
         if user_resp.status_code == 404:
-            logging.error(f"User @{username} not found")
+            logging.error(f"User {mask_username(username)} not found")
             return None
             
         user_resp.raise_for_status()
@@ -99,7 +117,7 @@ def get_latest_tweet(username: str, retry_count: int = 0) -> Optional[Dict[str, 
             "tweet.fields": "created_at"
         }
         
-        logging.info(f"Getting tweets for @{username}")
+        logging.info(f"Getting tweets for {mask_username(username)}")
         resp = requests.get(tweets_url, headers=headers, params=params, timeout=10)
         
         logging.info(f"Twitter API Response Status Code: {resp.status_code}")
@@ -132,7 +150,7 @@ def get_latest_tweet(username: str, retry_count: int = 0) -> Optional[Dict[str, 
         return data['data'][0]
         
     except requests.exceptions.RequestException as e:
-        logging.error(f"Twitter API error for @{username}: {str(e)}")
+        logging.error(f"Twitter API error for {mask_username(username)}: {str(e)}")
         return None
     except (KeyError, IndexError) as e:
         logging.error(f"Unexpected Twitter API response format: {str(e)}")
@@ -198,8 +216,9 @@ def main():
         state = load_state()
         updates_made = False
         
-        for user in TWITTER_USERS:
-            logging.info(f"Checking tweets for @{user}")
+        for index, user in enumerate(TWITTER_USERS):
+            masked_user = mask_username(user, index)
+            logging.info(f"Checking tweets for {masked_user}")
             tweet = get_latest_tweet(user)
             
             if not tweet:
@@ -220,11 +239,11 @@ def main():
                 )
                 
                 if send_telegram_message(message):
-                    logging.info(f"Successfully sent notification for @{user}'s tweet")
+                    logging.info(f"Successfully sent notification for {masked_user}'s tweet")
                     state[user] = tweet_id
                     updates_made = True
                 else:
-                    logging.error(f"Failed to send notification for @{user}'s tweet")
+                    logging.error(f"Failed to send notification for {masked_user}'s tweet")
         
         if updates_made:
             save_state(state)
