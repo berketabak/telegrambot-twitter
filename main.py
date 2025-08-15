@@ -91,10 +91,13 @@ def get_latest_tweet(username: str, retry_count: int = 0) -> Optional[Dict[str, 
             logging.error(f"Invalid username {mask_username(username)}")
             return None
             
-        # Log full response for debugging with masked username
+        # Log full response for debugging with masked username and display name
         response_data = user_resp.json()
-        if 'data' in response_data and 'username' in response_data['data']:
-            response_data['data']['username'] = mask_username(response_data['data']['username'])
+        if 'data' in response_data:
+            if 'username' in response_data['data']:
+                response_data['data']['username'] = mask_username(response_data['data']['username'])
+            if 'name' in response_data['data']:
+                response_data['data']['name'] = '[MASKED_NAME]'
         logging.info(f"User lookup response: {json.dumps(response_data, indent=2)}")
         
         if user_resp.status_code == 404:
@@ -128,12 +131,18 @@ def get_latest_tweet(username: str, retry_count: int = 0) -> Optional[Dict[str, 
             if reset_time:
                 wait_time = int(reset_time) - int(time.time()) + 5  # Add 5 seconds buffer
                 if wait_time > 0:
+                    if wait_time > 300:  # If wait time is more than 5 minutes
+                        logging.warning(f"Rate limit too long ({wait_time} seconds), terminating current run")
+                        return None
                     logging.warning(f"Rate limit reached. Waiting {wait_time} seconds before retry...")
-                    time.sleep(wait_time)  # Wait the full reset time
+                    time.sleep(wait_time)
                     return get_latest_tweet(username, retry_count + 1)
 
-            # If no reset time available, use exponential backoff
-            backoff_time = min(300 * (2 ** retry_count), 900)  # Max 15 minutes
+            # If no reset time available, use a shorter exponential backoff
+            backoff_time = min(60 * (2 ** retry_count), 300)  # Max 5 minutes
+            if backoff_time > 300:  # If backoff would be too long
+                logging.warning("Rate limit backoff would be too long, terminating current run")
+                return None
             logging.warning(f"Rate limit reached. Using exponential backoff: {backoff_time} seconds")
             time.sleep(backoff_time)
             return get_latest_tweet(username, retry_count + 1)
@@ -141,10 +150,18 @@ def get_latest_tweet(username: str, retry_count: int = 0) -> Optional[Dict[str, 
         resp.raise_for_status()
         
         data = resp.json()
+        # Mask sensitive information in the response data
+        if 'data' in data and isinstance(data['data'], list):
+            for tweet in data['data']:
+                if 'author' in tweet:
+                    if 'name' in tweet['author']:
+                        tweet['author']['name'] = '[MASKED_NAME]'
+                    if 'username' in tweet['author']:
+                        tweet['author']['username'] = mask_username(tweet['author']['username'])
         logging.info(f"Twitter API Response Data: {json.dumps(data, indent=2)}")
         
         if not data.get('data'):
-            logging.info(f"No recent tweets found for @{username}")
+            logging.info(f"No recent tweets found for {mask_username(username)}")
             return None
             
         return data['data'][0]
