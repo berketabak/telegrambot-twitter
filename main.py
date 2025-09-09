@@ -39,6 +39,20 @@ if not TWITTER_USERS:
     logging.warning("No Twitter usernames configured in TWITTER_USERNAMES environment variable")
 
 STATE_FILE = "state.json"
+HISTORY_FILE = "tweet_history.json"
+
+def load_tweet_history():
+    """Load the tweet history from file"""
+    try:
+        with open(HISTORY_FILE, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+def save_tweet_history(history):
+    """Save the tweet history to file"""
+    with open(HISTORY_FILE, 'w') as f:
+        json.dump(history, f)
 
 def load_state():
     try:
@@ -269,19 +283,36 @@ def main():
         for index, user in enumerate(TWITTER_USERS):
             masked_user = mask_username(user, index)
             logging.info(f"Checking tweets for {masked_user}")
-            tweet = get_latest_tweet(user)
+            tweets_response = get_latest_tweet(user)
             
             # Increment API call counter when we make a request
             state['monthly_api_calls'] = state.get('monthly_api_calls', 0) + 1
             
-            if not tweet:
+            if not tweets_response or 'data' not in tweets_response:
                 continue
                 
-            tweet_id = tweet["id"]
-            last_id = state.get(user)
+            # Load tweet history
+            tweet_history = load_tweet_history()
+            if user not in tweet_history:
+                tweet_history[user] = []
             
-            if last_id != tweet_id:
-                # Format tweet with HTML
+            # Get all tweets from the response
+            tweets = tweets_response['data']
+            new_tweets = []
+            
+            # Check each tweet against history
+            for tweet in tweets:
+                tweet_id = tweet['id']
+                if tweet_id not in tweet_history[user]:
+                    new_tweets.append(tweet)
+                    tweet_history[user].append(tweet_id)
+            
+            # Sort new tweets by ID (chronological order)
+            new_tweets.sort(key=lambda x: x['id'])
+            
+            # Process each new tweet
+            for tweet in new_tweets:
+                tweet_id = tweet['id']
                 created_at = tweet.get('created_at', 'Unknown time')
                 link = f"https://twitter.com/{user}/status/{tweet_id}"
                 message = (
@@ -293,10 +324,14 @@ def main():
                 
                 if send_telegram_message(message):
                     logging.info(f"Successfully sent notification for {masked_user}'s tweet")
-                    state[user] = tweet_id
+                    state[user] = tweet_id  # Keep updating state.json for backwards compatibility
                     updates_made = True
                 else:
                     logging.error(f"Failed to send notification for {masked_user}'s tweet")
+            
+            # Save updated tweet history
+            if new_tweets:
+                save_tweet_history(tweet_history)
         
         if updates_made:
             save_state(state)
