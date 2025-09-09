@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Bot state files
+tweet_history.json
+
 # C extensions
 *.so
 
