@@ -43,9 +43,17 @@ STATE_FILE = "state.json"
 def load_state():
     try:
         with open(STATE_FILE, 'r') as f:
-            return json.load(f)
+            state = json.load(f)
+            if 'monthly_api_calls' not in state:
+                state['monthly_api_calls'] = 0
+            if 'last_reset' not in state:
+                state['last_reset'] = '2025-09-27'  # Initial reset date
+            return state
     except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+        return {
+            'monthly_api_calls': 0,
+            'last_reset': '2025-09-27'  # Initial reset date
+        }
 
 def save_state(state):
     with open(STATE_FILE, 'w') as f:
@@ -206,6 +214,25 @@ def send_telegram_message(text: str) -> bool:
         logging.error(f"Telegram API error: {str(e)}")
         return False
 
+def check_monthly_reset(state: dict) -> None:
+    """Check and reset monthly API call counter if needed"""
+    current_date = datetime.utcnow()
+    last_reset = datetime.fromisoformat(state['last_reset'])
+    
+    # If we've passed the 27th of the month
+    if current_date.day >= 27 and current_date.month != last_reset.month:
+        state['monthly_api_calls'] = 0
+        # Set next reset date
+        next_reset = current_date.replace(day=27)
+        if current_date.day > 27:
+            # If we're past 27th, set to next month
+            if current_date.month == 12:
+                next_reset = next_reset.replace(year=current_date.year + 1, month=1)
+            else:
+                next_reset = next_reset.replace(month=current_date.month + 1)
+        state['last_reset'] = next_reset.isoformat()
+        logging.info("Monthly API call counter reset")
+
 def main():
     """Main function to check for new tweets and send notifications."""
     try:
@@ -233,10 +260,19 @@ def main():
         state = load_state()
         updates_made = False
         
+        # Check and reset monthly counter if needed
+        check_monthly_reset(state)
+        
+        # Log current API call count
+        logging.info(f"Current monthly API calls: {state.get('monthly_api_calls', 0)}")
+        
         for index, user in enumerate(TWITTER_USERS):
             masked_user = mask_username(user, index)
             logging.info(f"Checking tweets for {masked_user}")
             tweet = get_latest_tweet(user)
+            
+            # Increment API call counter when we make a request
+            state['monthly_api_calls'] = state.get('monthly_api_calls', 0) + 1
             
             if not tweet:
                 continue
